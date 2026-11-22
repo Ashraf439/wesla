@@ -1,0 +1,69 @@
+# WESLA configuration. Every key can be overridden by env vars, e.g.
+#   WESLA_JUDGE__TAU2=0.75   WESLA_LLM__OLLAMA_MODEL=llama3.2:3b
+domain = "tech-news"
+data_dir = "data"
+
+[llm]
+providers = ["ollama", "groq"]          # tried in order; add "openrouter" or "echo"
+ollama_url = "http://localhost:11434"
+ollama_model = "llama3.2:1b"            # base learning model (columns are wesla-col_XXX)
+groq_model = "llama-3.1-8b-instant"     # needs GROQ_API_KEY
+temperature = 0.2
+max_tokens = 512
+
+[embedding]
+backend = "sentence-transformers"       # or "hashing" (no download, lower quality)
+model = "BAAI/bge-small-en-v1.5"        # MUST match the trainer's --embedder
+
+[search]
+providers = ["ddgs", "tavily"]          # tavily needs TAVILY_API_KEY
+max_results = 6
+fetch_pages = true
+
+[chunk]
+min_tokens = 256
+max_tokens = 512
+overlap_tokens = 32
+
+[dedup]
+threshold = 0.8
+num_perm = 128
+
+[verify]
+consensus_sim = 0.70
+min_sources = 2
+contradiction_threshold = 0.80
+contradiction_min_sim = 0.50
+use_nli = true
+nli_model = "cross-encoder/nli-deberta-v3-small"
+min_verified_score = 0.35
+
+[memory]
+db_path = "data/ltm.sqlite"
+stm_turns = 8
+decay_half_life_days = 30.0
+hit_threshold = 0.75                    # calibrate on your data (see README)
+top_k = 5
+
+[router]
+memory_min_hits = 1
+entropy_threshold = 1.2
+use_entropy = true
+
+[judge]
+w_r = 0.25
+w_q = 0.25
+w_n = 0.15
+w_u = 0.20
+w_s = 0.15
+tau1 = 0.40
+tau2 = 0.70
+utility_saturation = 5
+learn_min_stability = 0.5
+learn_min_quality = 0.6
+learn_min_recurrence = 1
+merge_sim = 0.90
+
+[queue]
+path = "data/train_queue.jsonl"
+hf_repo = ""                            # e.g. "your-user/wesla-train-queue" (needs HF_TOKEN)

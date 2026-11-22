@@ -1,0 +1,9 @@
+# offline trainer (Kaggle / Colab GPU). torch is preinstalled there.
+transformers>=4.44
+peft>=0.12
+accelerate>=0.33
+safetensors>=0.4
+datasets>=2.20
+sentence-transformers>=3.0
+huggingface_hub>=0.24
+numpy>=1.26

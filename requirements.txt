@@ -1,0 +1,16 @@
+# live app (laptop / HF Space, CPU)
+numpy>=1.26
+requests>=2.31
+sentence-transformers>=3.0
+faiss-cpu>=1.8
+datasketch>=1.6
+ddgs>=9.0
+trafilatura>=1.12
+gradio>=4.44
+huggingface_hub>=0.24
+pytest>=8
+
+python-docx>=1.1
+openpyxl>=3.1
+PyMuPDF>=1.26
+markdown-it-py>=3

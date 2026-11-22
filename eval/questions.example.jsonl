@@ -1,0 +1,3 @@
+{"question": "What is retrieval-augmented generation?", "answers": ["retriever", "retrieval"]}
+{"question": "Who introduced LoRA low-rank adaptation and when?", "answers": ["2021", "Hu"]}
+{"question": "What does elastic weight consolidation penalise?", "answers": ["fisher", "important weights", "change in important parameters"]}
