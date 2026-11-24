@@ -205,13 +205,13 @@ class WESLA:
         self._learning.start()
 
     # ------------------------------------------------------------ main entry
-    def ask(self, query: str, *, model_override: str | None = None, conversation=None) -> Answer:
+    def ask(self, query: str, *, model_override: str | None = None, conversation=None, research_query: str | None = None) -> Answer:
         self.wait_for_learning()
         qid = uuid.uuid4().hex[:6]
         log.info("=== query %s: %r", qid, query[:200])
         try:
             with stage(log, f"query {qid} total"):
-                ans = self._ask(query, model_override, conversation)
+                ans = self._ask(query, model_override, conversation, research_query)
         except Exception:
             self.metrics["errors"] += 1
             raise
@@ -219,7 +219,7 @@ class WESLA:
                  ans.debug.get("decision_counts"), len(ans.sources))
         return ans
 
-    def _ask(self, query: str, model_override=None, conversation=None) -> Answer:
+    def _ask(self, query: str, model_override=None, conversation=None, research_query: str | None = None) -> Answer:
         self.metrics["queries"] += 1
         with stage(log, "select column"):
             model, model_reason = self.adapters.model_for(query)
@@ -230,15 +230,15 @@ class WESLA:
         original = query
         previous = [t.text for t in stm.turns if t.role == "user"]
         with stage(log, "rewrite follow-up"):
-            query = rewrite_followup(self.llm, query, previous)
+            query = research_query or rewrite_followup(self.llm, query, previous)
         history = stm.render(query)
         # start the web search while the router decides (its model probe takes seconds);
         # if the answer comes from memory or the model itself, the result is simply unused
         prefetch = None
-        if not self.router.memory_covers(query):
+        if not research_query and not self.router.memory_covers(query):
             prefetch = self._prefetch_pool.submit(self.search.search, query, self.cfg.search.max_results)
         with stage(log, "route"):
-            rd = self.router.route(query, column_model=model)
+            rd = self.router.route(query, column_model=model, history=history, require_sources=bool(research_query))
         log.info("route=%s (%s); memory hits=%d", rd.route.value, rd.reason, len(rd.memory_hits))
         self.metrics[f"route_{rd.route.value}"] += 1
         debug: dict = {"route_reason": rd.reason, "model": model_reason}
@@ -339,6 +339,8 @@ class WESLA:
                 log.warning("LLM provider error (fell back): %s", e)
             log.info("generated %d chars with %s:%s", len(gen.text), gen.provider, gen.model)
             text, contexts = gen.text, [c for c, _ in ctx]
+            if research_query and rd.route == Route.WEB and not sources:
+                text = "I searched for supporting sources but couldn’t verify an answer to this question."
             debug["generator"] = f"{gen.provider}:{gen.model}"
 
         if pending_learn is not None:

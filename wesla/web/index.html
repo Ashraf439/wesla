@@ -1,6 +1,65 @@
 <!doctype html><html lang="en" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/assets/wesla.svg"><title>Wesla · Chat</title><link rel="stylesheet" href="/assets/chat.css"><script src="/assets/chat.js" defer></script></head>
-<body><aside id="sidebar"><div class="brand"><img src="/assets/wesla.svg" alt=""> WESLA</div><button id="new">＋ &nbsp; New chat</button><h2>Recent chats</h2><nav id="recent"></nav><a class="tools" href="/tools/">⚙ &nbsp; Memory, learning &amp; logs ↗</a><a class="settings-link" href="#settings">Settings</a></aside><main><header><button id="toggle" aria-label="Toggle sidebar">☰</button><strong id="title">New chat</strong><span class="spacer"></span><button id="download" aria-label="Download chat" title="Download chat"></button></header><section id="scroll"><div id="welcome"><img class="hero-mark" src="/assets/wesla.svg" alt=""><h1>What’s on your mind?</h1><div class="suggest"><button>Explain a concept <span>↗</span></button><button>Compare two ideas <span>↗</span></button><button>Research a topic <span>↗</span></button></div></div><div id="thread"></div></section><footer><form id="composer"><div id="files"></div><input hidden multiple type="file" id="fileInput" accept=".pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.tsv,.json,.log,.py,.js,.html,.xml,.yaml,.yml"><textarea id="question" rows="2" aria-label="Message Wesla" placeholder="Message Wesla…"></textarea><div class="bar"><button type="button" id="attach" title="Attach files" aria-label="Attach files">＋</button><span class="spacer"></span><div id="picker"><button type="button" id="model" aria-controls="models" aria-expanded="false"></button><div id="models" hidden role="group" aria-label="Available models"></div></div><button id="send" aria-label="Send message">↑</button></div></form><div id="status" role="status"></div></footer><section id="settings" hidden aria-labelledby="settings-heading">
+<body><aside id="sidebar"><div class="brand"><img src="/assets/wesla.svg" alt=""> WESLA</div><button id="new">＋ &nbsp; New chat</button><h2>Recent chats</h2><nav id="recent"></nav><a class="tools" href="/tools/">⚙ &nbsp; Memory, learning &amp; logs ↗</a><a class="settings-link" href="#artifacts">Artifacts</a><a class="settings-link" href="#memory">Memory &amp; training</a><a class="settings-link" href="#settings">Settings</a></aside><main><header><button id="toggle" aria-label="Toggle sidebar">☰</button><strong id="title">New chat</strong><span class="spacer"></span><a class="header-artifacts" href="#artifacts">Artifacts</a><button id="download" aria-label="Download chat" title="Download chat"></button></header><section id="scroll"><div id="welcome"><img class="hero-mark" src="/assets/wesla.svg" alt=""><h1>What’s on your mind?</h1><div class="suggest"><button>Explain a concept <span>↗</span></button><button>Compare two ideas <span>↗</span></button><button>Research a topic <span>↗</span></button></div></div><div id="thread">
+  <div id="messages"></div>
+  <div id="activity" hidden>
+    <span class="activity-dot" aria-hidden="true"></span>
+    <span id="activity-stage" role="status"></span>
+    <span id="activity-time" aria-hidden="true"></span>
+  </div>
+</div></section><footer><form id="composer"><div id="files"></div><div id="quote-draft"></div><input hidden multiple type="file" id="fileInput"><textarea id="question" rows="2" aria-label="Message Wesla" placeholder="Message Wesla…"></textarea><div class="bar"><button type="button" id="attach" title="Attach files" aria-label="Attach files">＋</button><span class="spacer"></span><div id="picker"><button type="button" id="model" aria-controls="models" aria-expanded="false"></button><div id="models" hidden role="group" aria-label="Available models"></div></div><button id="send" aria-label="Send message">↑</button></div></form><div id="status" role="status"></div></footer><section id="settings" hidden aria-labelledby="settings-heading">
 <a href="#chat">← Back to chat</a><h1 id="settings-heading" tabindex="-1">Settings</h1>
 <label for="appearance">Appearance</label>
 <select id="appearance"><option value="dark">Dark</option><option value="light">Light</option></select>
-</section></main><dialog id="dialog"><div class="dialog-head"><h2 id="dialogTitle"></h2><button id="close" aria-label="Close dialog">×</button></div><div id="dialogBody"></div></dialog></body></html>
+</section>
+<section id="artifacts" class="workspace-page" hidden aria-labelledby="artifacts-heading">
+  <a href="#chat">← Back to chat</a><h1 id="artifacts-heading" tabindex="-1">Artifacts</h1>
+  <p>Original files uploaded to WESLA. Download a file or attach it to the current chat.</p>
+  <div id="artifact-list"></div>
+</section>
+<section id="memory" class="workspace-page" hidden aria-labelledby="memory-heading">
+  <a href="#chat">← Back to chat</a><h1 id="memory-heading" tabindex="-1">Memory &amp; training</h1>
+  <h2>Short-term memory</h2>
+  <p>Context preview for this chat. WESLA may select different turns for each question. File answers use excerpts from the attached files.</p>
+  <button id="clear-context" class="action">Clear short-term memory</button>
+  <div id="short-memory"></div>
+  <h2>Long-term memory</h2>
+  <p id="memory-counts" role="status"></p>
+  <div id="long-memory"></div>
+  <div class="table-toolbar"><button id="memory-prev" class="action">Previous</button><button id="memory-next" class="action">Next</button></div>
+  <h2>Training</h2>
+  <p id="training-counts"></p>
+  <p>WESLA queues eligible records. A separate trainer updates LoRA adapters, and an import applies accepted results. Uploading a document makes it available for chat analysis.</p>
+  <p>Completed exchanges are available as training examples by default. Review the export before running the trainer.</p>
+  <button id="export-training" class="action">Export this chat for training</button>
+  <p id="training-export-status" role="status"></p>
+  <p><a href="/tools/">Open learning statistics and import tools</a></p>
+</section></main>
+<div id="selection-actions" role="group" aria-label="Actions for selected text" hidden>
+  <button id="selection-add" type="button">Add to chat</button>
+  <button id="selection-side" type="button">Ask in side chat</button>
+</div>
+<aside id="side-chat" hidden aria-labelledby="side-chat-title">
+  <div class="preview-header">
+    <strong id="side-chat-title" class="spacer">Side chat</strong>
+    <button id="side-chat-close" type="button" aria-label="Close side chat">×</button>
+  </div>
+  <div class="side-context"><blockquote id="side-quote"></blockquote></div>
+  <div id="side-messages" role="log" aria-label="Side conversation"></div>
+  <form id="side-composer">
+    <textarea id="side-question" rows="2" aria-label="Side chat question" placeholder="Ask about this excerpt…"></textarea>
+    <div class="bar"><span id="side-status" role="status"></span><button id="side-send">Send</button></div>
+  </form>
+</aside>
+<aside id="file-preview" hidden aria-labelledby="file-preview-title">
+  <div class="preview-header">
+    <div class="preview-heading">
+      <strong id="file-preview-title"></strong>
+      <span id="file-preview-info"></span>
+    </div>
+    <a id="file-preview-download" class="action">Download</a>
+    <button id="file-preview-close" type="button" aria-label="Close file preview" title="Close preview">×</button>
+  </div>
+  <div id="file-preview-controls" class="preview-controls"></div>
+  <div id="file-preview-body" class="preview-body" aria-live="polite"></div>
+</aside>
+<dialog id="dialog"><div class="dialog-head"><h2 id="dialogTitle"></h2><button id="close" aria-label="Close dialog">×</button></div><div id="dialogBody"></div></dialog></body></html>
