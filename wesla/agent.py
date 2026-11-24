@@ -6,6 +6,7 @@ User feedback -> utility / reliability updates (never direct weight updates).
 """
 from __future__ import annotations
 
+import threading
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
@@ -17,12 +18,13 @@ from .adapters import AdapterRegistry
 from .config import Config
 from .dedup import Deduplicator
 from .embeddings import Embedder, make_embedder
-from .extract import results_to_chunks
+from .extract import results_to_chunks, select_chunks
 from .judge import Candidate, LearningJudge
 from .llm import LLMChain, make_llm
 from .log import get_logger, stage
 from .memory import LongTermMemory, ShortTermMemory
 from .rag import build_messages
+from .rewrite import rewrite_followup
 from .router import QueryRouter
 from .search import SearchChain, make_search
 from .train_queue import TrainQueue
@@ -63,13 +65,18 @@ class WESLA:
         self.verifier = Verifier(self.embedder, self.ltm, nli,
                                  self.reputation, v.consensus_sim, v.min_sources,
                                  v.contradiction_threshold, v.recency_half_life_days,
-                                 contradiction_min_sim=v.contradiction_min_sim)
+                                 contradiction_min_sim=v.contradiction_min_sim,
+                                 memory_k=v.nli_memory_k)
         self.judge = LearningJudge(cfg.judge)
         self.router = QueryRouter(cfg.router, cfg.memory, self.ltm, self.llm)
         self.queue = TrainQueue(cfg.queue.path, cfg.queue.hf_repo)
         self.adapters = AdapterRegistry(str(data / "columns.json"), self.embedder, cfg.llm.ollama_model)
         self.metrics: Counter = Counter()
         self._answers: dict[str, _AnswerRecord] = {}
+        self._learning: threading.Thread | None = None
+        self._learn_lock = threading.Lock()
+        from concurrent.futures import ThreadPoolExecutor
+        self._prefetch_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="wesla-search")
         log.info("WESLA ready: %d LTM items, %d trained column(s)", len(self.ltm), len(self.adapters.columns))
 
     # ------------------------------------------------------------ helpers
@@ -161,8 +168,45 @@ class WESLA:
             self.queue.enqueue(item, d.components, vec)
         return d
 
+    # ------------------------------------------------------------ background learning
+    def wait_for_learning(self, timeout: float | None = None) -> None:
+        """Block until the previous answer's learning step (NLI + Learning Judge) has finished."""
+        t = self._learning
+        if t is not None and t.is_alive():
+            log.info("waiting for the previous answer's learning step")
+            t.join(timeout)
+
+    def _learn_from(self, verified, vecs, checked: set[int]) -> list[JudgeDecision]:
+        """Contradiction-check the chunks not used in the answer, then run every candidate through
+        the Learning Judge (discard / store in LTM / queue for training)."""
+        with self._learn_lock:
+            rest = [i for i in range(len(verified)) if i not in checked]
+            if rest:
+                with stage(log, "verify (rest)", chunks=len(rest)):
+                    self.verifier.check_contradictions(verified, vecs, rest)
+            decisions = []
+            with stage(log, "learning judge", candidates=len(verified)):
+                for vc, v in zip(verified, vecs):
+                    d = self._ingest(vc, v)
+                    if d:
+                        decisions.append(d)
+                        log.debug("judge %s L_s=%.3f %s %s", d.action.value, d.score,
+                                  {k: round(x, 2) for k, x in d.components.items()}, vc.chunk.url)
+            log.info("learning: %s", dict(Counter(d.action.value for d in decisions)))
+            return decisions
+
+    def _learn_in_background(self, verified, vecs, checked: set[int]) -> None:
+        def run():
+            try:
+                self._learn_from(verified, vecs, checked)
+            except Exception:
+                log.exception("background learning failed")
+        self._learning = threading.Thread(target=run, name="wesla-learn", daemon=True)
+        self._learning.start()
+
     # ------------------------------------------------------------ main entry
     def ask(self, query: str, *, model_override: str | None = None, conversation=None) -> Answer:
+        self.wait_for_learning()
         qid = uuid.uuid4().hex[:6]
         log.info("=== query %s: %r", qid, query[:200])
         try:
@@ -183,14 +227,26 @@ class WESLA:
             model, model_reason = model_override, model_override
         log.info("model: %s", model_reason)
         stm = conversation if conversation is not None else self.stm
+        original = query
+        previous = [t.text for t in stm.turns if t.role == "user"]
+        with stage(log, "rewrite follow-up"):
+            query = rewrite_followup(self.llm, query, previous)
         history = stm.render(query)
+        # start the web search while the router decides (its model probe takes seconds);
+        # if the answer comes from memory or the model itself, the result is simply unused
+        prefetch = None
+        if not self.router.memory_covers(query):
+            prefetch = self._prefetch_pool.submit(self.search.search, query, self.cfg.search.max_results)
         with stage(log, "route"):
             rd = self.router.route(query, column_model=model)
         log.info("route=%s (%s); memory hits=%d", rd.route.value, rd.reason, len(rd.memory_hits))
         self.metrics[f"route_{rd.route.value}"] += 1
         debug: dict = {"route_reason": rd.reason, "model": model_reason}
+        if query != original:
+            debug["rewritten_query"] = query
         rec = _AnswerRecord()
         decisions: list[JudgeDecision] = []
+        pending_learn = None
 
         if rd.route == Route.PARAMETRIC and rd.draft is not None:
             debug["generator"] = f"{rd.draft.provider}:{rd.draft.model}"
@@ -211,7 +267,8 @@ class WESLA:
             else:
                 self.metrics["web_searches"] += 1
                 with stage(log, "web search", providers=[p.name for p in self.search.providers]):
-                    results = self.search.search(query, self.cfg.search.max_results)
+                    results = (prefetch.result() if prefetch is not None
+                               else self.search.search(query, self.cfg.search.max_results))
                 debug["search_errors"] = getattr(self.search, "last_errors", [])
                 for e in debug["search_errors"]:
                     log.warning("search error: %s", e)
@@ -221,26 +278,42 @@ class WESLA:
                 c = self.cfg.chunk
                 with stage(log, "fetch + chunk pages", n=len(results), fetch=self.cfg.search.fetch_pages):
                     chunks = results_to_chunks(results, self.cfg.search.fetch_pages, c.min_tokens,
-                                               c.max_tokens, c.overlap_tokens)
+                                               c.max_tokens, c.overlap_tokens,
+                                               self.cfg.search.fetch_budget_s, self.cfg.search.fetch_timeout_s)
                 log.info("%d chunk(s) from %d page(s)", len(chunks), len(results))
                 # dedup is per batch: re-observing a known fact in a later query must
                 # reach the LTM merge step, because recurrence is the utility signal U
                 dedup = Deduplicator(self.cfg.dedup.threshold, self.cfg.dedup.num_perm,
                                      self.cfg.dedup.shingle_size)
                 chunks, dropped = dedup.filter(chunks)
+                n_before = len(chunks)
+                chunks = select_chunks(chunks, query, c.max_chunks, c.max_chunks_per_page)
+                if len(chunks) < n_before:
+                    log.info("kept the %d most relevant of %d chunks", len(chunks), n_before)
                 self.metrics["dedup_dropped"] += dropped
                 log.info("dedup kept %d, dropped %d", len(chunks), dropped)
+                # cheap signals for every chunk; the slow NLI contradiction check only for the
+                # chunks that will actually be shown to the model, the rest after answering
                 with stage(log, "verify", chunks=len(chunks)):
-                    verified, vecs = self.verifier.verify(chunks)
-                log.info("verified: %d blocked of %d", sum(v.blocked for v in verified), len(verified))
+                    verified, vecs = self.verifier.verify(chunks, run_nli=False)
                 qv = self.embedder.embed([query])[0]
-                ranked = []
-                for vc, v in zip(verified, vecs):
-                    if vc.blocked or vc.score < self.cfg.verify.min_verified_score:
-                        continue
-                    ranked.append((0.6 * float(v @ qv) + 0.4 * vc.score, vc))
-                ranked.sort(key=lambda x: -x[0])
-                for _, vc in ranked[: self.cfg.memory.top_k]:
+                order = sorted(range(len(verified)),
+                               key=lambda i: -(0.6 * float(vecs[i] @ qv) + 0.4 * verified[i].score))
+                order = [i for i in order if verified[i].score >= self.cfg.verify.min_verified_score]
+                top_k = self.cfg.memory.top_k
+                checked: set[int] = set()
+                picked: list[int] = []
+                with stage(log, "contradiction check (answer chunks)"):
+                    while len(picked) < top_k and len(checked) < len(order):
+                        batch = [i for i in order if i not in checked][: top_k - len(picked) + 1]
+                        self.verifier.check_contradictions(verified, vecs, batch)
+                        checked.update(batch)
+                        picked += [i for i in batch if not verified[i].blocked]
+                picked = sorted(picked, key=order.index)[:top_k]
+                log.info("verified: %d of %d checked chunk(s) blocked; %d used",
+                         sum(verified[i].blocked for i in checked), len(checked), len(picked))
+                for i in picked:
+                    vc = verified[i]
                     ctx.append((vc.chunk.text, f"{vc.chunk.domain}, verified {vc.score:.2f}"))
                     sources.append(vc.chunk.url)
                     rec.domains.append(vc.chunk.domain)
@@ -249,13 +322,11 @@ class WESLA:
                     ctx.append((it.knowledge, f"memory #{it.id}"))
                     rec.memory_ids.append(it.id)
                 # every verified candidate goes through the Learning Judge
-                with stage(log, "learning judge", candidates=len(verified)):
-                    for vc, v in zip(verified, vecs):
-                        d = self._ingest(vc, v)
-                        if d:
-                            decisions.append(d)
-                            log.debug("judge %s L_s=%.3f %s %s", d.action.value, d.score,
-                                      {k: round(x, 2) for k, x in d.components.items()}, vc.chunk.url)
+                if self.cfg.learn.background:
+                    pending_learn = (verified, vecs, checked)   # started after generation
+                    debug["learning"] = "running in the background after this answer"
+                else:
+                    decisions += self._learn_from(verified, vecs, checked)
                 debug["verification"] = [
                     {"url": vc.chunk.url, "auth": round(vc.authority, 2), "cons": round(vc.consensus, 2),
                      "rec": round(vc.recency, 2), "contra": round(vc.contradiction, 2),
@@ -270,7 +341,9 @@ class WESLA:
             text, contexts = gen.text, [c for c, _ in ctx]
             debug["generator"] = f"{gen.provider}:{gen.model}"
 
-        stm.add("user", query)
+        if pending_learn is not None:
+            self._learn_in_background(*pending_learn)
+        stm.add("user", original)
         stm.add("assistant", text)
         answer_id = uuid.uuid4().hex[:10]
         self._answers[answer_id] = rec
@@ -283,6 +356,7 @@ class WESLA:
     def feedback(self, answer_id: str, rating: int, correction: str = "") -> dict:
         """rating: +1 helpful / -1 wrong. Feedback only changes memory scores and
         source reputation; it never touches model weights directly."""
+        self.wait_for_learning()
         rec = self._answers.get(answer_id)
         if rec is None:
             raise KeyError(f"unknown answer id {answer_id}")
@@ -319,6 +393,7 @@ class WESLA:
         import json
         import shutil
 
+        self.wait_for_learning()
         run = Path(run_dir)
         if (run / "columns.json").exists():
             shutil.copy(run / "columns.json", Path(self.cfg.data_dir) / "columns.json")
@@ -341,6 +416,7 @@ class WESLA:
         return {"learned": n_ok, "returned_to_ltm": n_back, "columns": len(self.adapters.columns)}
 
     def stats(self) -> dict:
+        self.wait_for_learning()
         m = dict(self.metrics)
         cands = m.get("candidates", 0)
         if cands:

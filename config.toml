@@ -19,11 +19,15 @@ model = "BAAI/bge-small-en-v1.5"        # MUST match the trainer's --embedder
 providers = ["ddgs", "tavily"]          # tavily needs TAVILY_API_KEY
 max_results = 6
 fetch_pages = true
+fetch_budget_s = 7.0                    # pages not fetched by then fall back to their search snippet
+fetch_timeout_s = 6.0                   # per page
 
 [chunk]
 min_tokens = 256
 max_tokens = 512
 overlap_tokens = 32
+max_chunks = 8                          # most query-relevant chunks verified + judged per web query
+max_chunks_per_page = 3
 
 [dedup]
 threshold = 0.8
@@ -33,8 +37,9 @@ num_perm = 128
 consensus_sim = 0.70
 min_sources = 2
 contradiction_threshold = 0.80
-contradiction_min_sim = 0.50
+contradiction_min_sim = 0.70             # NLI only vs memory about the same fact (CPU NLI ~0.4s/pair)
 use_nli = true
+nli_memory_k = 2                        # trusted memory items checked against each chunk
 nli_model = "cross-encoder/nli-deberta-v3-small"
 min_verified_score = 0.35
 
@@ -67,3 +72,6 @@ merge_sim = 0.90
 [queue]
 path = "data/train_queue.jsonl"
 hf_repo = ""                            # e.g. "your-user/wesla-train-queue" (needs HF_TOKEN)
+
+[learn]
+background = true                       # NLI on unused chunks + Learning Judge run after the answer

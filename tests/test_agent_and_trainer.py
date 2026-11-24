@@ -26,6 +26,7 @@ def make_agent(tmp_path, results, entropy=None):
     cfg.queue.path = str(tmp_path / "train_queue.jsonl")
     cfg.search.fetch_pages = False
     cfg.memory.hit_threshold = 0.3
+    cfg.learn.background = False      # tests read the Judge's decisions right after ask()
     return WESLA(cfg, embedder=HashingEmbedder(), llm=LLMChain([EchoLLM(entropy=entropy)]),
                  search=SearchChain([StaticSearch(results)], backoff_s=0), nli=HeuristicNLI())
 

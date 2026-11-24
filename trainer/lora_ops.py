@@ -202,13 +202,18 @@ def train_lora(model, tok, texts: list[str], *, ewc: dict | None, lam: float, fr
     for ep in range(epochs):
         import random
         random.shuffle(texts)
+        n_batches = math.ceil(len(texts) / bs)
         for i, b in enumerate(batches(tok, texts, max_len, bs, device)):
+            # the last group of an epoch may be shorter than grad_accum: average over its real size
+            group = min(grad_accum, n_batches - (i // grad_accum) * grad_accum)
             with torch.autocast(device_type=device, dtype=torch.float16, enabled=device == "cuda"):
                 ce = model(**b).loss
             pen = ewc_penalty(model, ewc, lam)
-            loss = (ce.float() + pen) / grad_accum
+            loss = (ce.float() + pen) / group
             scaler.scale(loss).backward()
-            if (i + 1) % grad_accum == 0:
+            # step at every full group AND at the end of the epoch, so a small queue
+            # (fewer batches than grad_accum) still updates the weights
+            if (i + 1) % grad_accum == 0 or i + 1 == n_batches:
                 scaler.unscale_(opt)
                 torch.nn.utils.clip_grad_norm_(params, 1.0)
                 scaler.step(opt)
@@ -221,4 +226,6 @@ def train_lora(model, tok, texts: list[str], *, ewc: dict | None, lam: float, fr
     opt.zero_grad(set_to_none=True)
     for h in hooks:
         h.remove()
+    if step == 0:
+        raise RuntimeError("training made no optimizer steps; refusing to report an untrained column")
     return {"steps": step, "final_ce": hist[-1][0] if hist else None}

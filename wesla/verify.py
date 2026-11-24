@@ -71,16 +71,23 @@ class CrossEncoderNLI:
     def __init__(self, model_name: str):
         from sentence_transformers import CrossEncoder
 
-        self.model = CrossEncoder(model_name, device="cpu")
+        self.model = CrossEncoder(model_name, device="cpu", max_length=256)
         labels = getattr(self.model.model.config, "id2label", None) or {}
         names = {i: str(l).lower() for i, l in labels.items()}
         self.c_idx = next((i for i, l in names.items() if "contra" in l), 0)
 
     def contradiction(self, premise: str, hypothesis: str) -> float:
-        logits = np.asarray(self.model.predict([(premise, hypothesis)]))[0]
-        p = np.exp(logits - logits.max())
-        p /= p.sum()
-        return float(p[self.c_idx])
+        return self.contradiction_batch([(premise, hypothesis)])[0]
+
+    def contradiction_batch(self, pairs: list[tuple[str, str]]) -> list[float]:
+        """One forward pass over all pairs (far faster than one call per pair on CPU)."""
+        if not pairs:
+            return []
+        logits = np.asarray(self.model.predict(pairs, batch_size=16, show_progress_bar=False))
+        logits = logits.reshape(len(pairs), -1)
+        p = np.exp(logits - logits.max(axis=1, keepdims=True))
+        p /= p.sum(axis=1, keepdims=True)
+        return [float(x) for x in p[:, self.c_idx]]
 
 
 _NUM = re.compile(r"\b\d+(?:[.,]\d+)?\b")
@@ -126,7 +133,8 @@ class Verifier:
     def __init__(self, embedder: Embedder, ltm: LongTermMemory, nli: NLIModel,
                  reputation: SourceReputation, consensus_sim: float = 0.7, min_sources: int = 2,
                  contradiction_threshold: float = 0.8, recency_half_life_days: float = 365.0,
-                 trusted_reliability: float = 0.6, contradiction_min_sim: float = 0.5):
+                 trusted_reliability: float = 0.6, contradiction_min_sim: float = 0.5,
+                 memory_k: int = 2):
         self.embedder = embedder
         self.ltm = ltm
         self.nli = nli
@@ -137,6 +145,7 @@ class Verifier:
         self.half_life = recency_half_life_days
         self.trusted = trusted_reliability
         self.c_min_sim = contradiction_min_sim
+        self.memory_k = memory_k
 
     def _recency(self, c: Chunk) -> float:
         if c.published is None:
@@ -145,8 +154,9 @@ class Verifier:
         age = max(0.0, (utcnow() - pub).total_seconds() / 86400)
         return float(0.5 ** (age / self.half_life))
 
-    def verify(self, chunks: list[Chunk]) -> tuple[list[VerifiedChunk], np.ndarray]:
-        """Returns verified chunks (same order) and their embeddings."""
+    def verify(self, chunks: list[Chunk], run_nli: bool = True) -> tuple[list[VerifiedChunk], np.ndarray]:
+        """Returns verified chunks (same order) and their embeddings. With run_nli=False only the
+        cheap signals are computed; call `check_contradictions` later for the chunks that need it."""
         if not chunks:
             return [], np.zeros((0, self.embedder.dim), dtype=np.float32)
         vecs = self.embedder.embed([c.text for c in chunks])
@@ -165,17 +175,31 @@ class Verifier:
             auth = self.rep.score(domains[i])
             if support:
                 auth = max(auth, 0.5 * auth + 0.5 * max(self.rep.score(d) for d in support))
-            # contradiction vs trusted memory
-            contra, reason = 0.0, ""
-            for item, sim in self.ltm.search(vecs[i], k=3, touch=False, min_sim=self.c_min_sim):
-                if item.reliability < self.trusted:
-                    continue
-                p = self.nli.contradiction(item.knowledge, c.text)
-                if p > contra:
-                    contra, reason = p, f"contradicts memory #{item.id}"
-            blocked = contra >= self.c_thresh
             out.append(VerifiedChunk(chunk=c, authority=auth, consensus=consensus,
-                                     recency=self._recency(c), contradiction=contra,
-                                     supporting_domains=support, blocked=blocked,
-                                     reason=reason if blocked else ""))
+                                     recency=self._recency(c), contradiction=0.0,
+                                     supporting_domains=support))
+        if run_nli:
+            self.check_contradictions(out, vecs, range(len(out)))
         return out, vecs
+
+    def check_contradictions(self, verified: list[VerifiedChunk], vecs: np.ndarray, indices) -> None:
+        """NLI contradiction vs trusted memory for the given chunks, all pairs in one batch.
+        Updates contradiction / blocked / reason in place."""
+        pairs: list[tuple[str, str]] = []
+        owners: list[tuple[int, int]] = []
+        todo = list(indices)
+        for i in todo:
+            for item, sim in self.ltm.search(vecs[i], k=self.memory_k, touch=False, min_sim=self.c_min_sim):
+                # near-identical text cannot contradict itself; skip the expensive model call
+                if item.reliability >= self.trusted and sim < 0.95:
+                    pairs.append((item.knowledge, verified[i].chunk.text))
+                    owners.append((i, item.id))
+        batch = getattr(self.nli, "contradiction_batch", None)
+        probs = batch(pairs) if batch else [self.nli.contradiction(a, b) for a, b in pairs]
+        for (i, mid), p in zip(owners, probs):
+            vc = verified[i]
+            if p > vc.contradiction:
+                vc.contradiction = p
+                if p >= self.c_thresh:
+                    vc.blocked, vc.reason = True, f"contradicts memory #{mid}"
+        log.debug("NLI: %d pair(s) for %d chunk(s)", len(pairs), len(todo))
