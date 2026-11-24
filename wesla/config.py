@@ -42,8 +42,10 @@ class SearchConfig:
     providers: list[str] = field(default_factory=lambda: ["ddgs", "tavily"])
     max_results: int = 6
     fetch_pages: bool = True
-    max_retries: int = 3
-    backoff_s: float = 2.0
+    max_retries: int = 2
+    backoff_s: float = 1.0
+    fetch_budget_s: float = 7.0     # stop waiting for slow pages after this; their snippet is used
+    fetch_timeout_s: float = 6.0    # per page
 
 
 @dataclass
@@ -51,6 +53,8 @@ class ChunkConfig:
     min_tokens: int = 256
     max_tokens: int = 512
     overlap_tokens: int = 32
+    max_chunks: int = 8             # chunks verified / judged per web query (most query-relevant)
+    max_chunks_per_page: int = 3
 
 
 @dataclass
@@ -65,9 +69,10 @@ class VerifyConfig:
     consensus_sim: float = 0.70     # cosine similarity for "two sources agree"
     min_sources: int = 2            # distinct domains needed for full consensus
     contradiction_threshold: float = 0.80  # NLI contradiction prob to block
-    contradiction_min_sim: float = 0.50    # only NLI-check memory items at least this similar
+    contradiction_min_sim: float = 0.70    # only NLI-check memory items about the same fact
     nli_model: str = "cross-encoder/nli-deberta-v3-small"
     use_nli: bool = True
+    nli_memory_k: int = 2           # trusted memory items NLI-checked per chunk
     recency_half_life_days: float = 365.0
     min_verified_score: float = 0.35  # below this a chunk is not used at all
 
@@ -117,6 +122,13 @@ class JudgeConfig:
 
 
 @dataclass
+class LearnConfig:
+    # run the remaining contradiction checks + Learning Judge after the answer is returned,
+    # so the user does not wait for them (the next question waits for them instead)
+    background: bool = True
+
+
+@dataclass
 class QueueConfig:
     path: str = "data/train_queue.jsonl"
     hf_repo: str = ""   # e.g. "username/wesla-train-queue" (dataset repo); empty = local only
@@ -136,6 +148,7 @@ class Config:
     router: RouterConfig = field(default_factory=RouterConfig)
     judge: JudgeConfig = field(default_factory=JudgeConfig)
     queue: QueueConfig = field(default_factory=QueueConfig)
+    learn: LearnConfig = field(default_factory=LearnConfig)
 
     def validate(self) -> None:
         j = self.judge
