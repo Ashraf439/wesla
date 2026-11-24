@@ -44,7 +44,7 @@ Design choices beyond the proposal text (all configurable in `config.toml`):
 ```bash
 python -m venv .venv && .venv\Scripts\activate        # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-python -m pytest                # 25 offline tests, no models needed
+python -m pytest                # 32 offline tests, no models needed
 python -m wesla demo            # offline walkthrough of every Judge outcome
 ```
 
@@ -71,6 +71,19 @@ The first run downloads `bge-small-en-v1.5` (~130 MB) and the NLI cross-encoder 
   embedder, NLI, search, page fetch, generation). `--quick` skips the network checks.
 - `python -m wesla logs -n 100` prints the end of the log; `--log-level DEBUG` (before the command)
   makes the console verbose too.
+
+### Speed and follow-up questions
+- A web answer used to take 50–390 s, almost all of it in NLI verification of every chunk and in
+  fetching pages one by one. Now pages are fetched in parallel with a deadline
+  (`search.fetch_budget_s`), only the `chunk.max_chunks` most query-relevant chunks are processed, the
+  web search starts while the router is still deciding, and NLI runs in one batch and only on the
+  chunks shown to the model. The remaining NLI checks and the Learning Judge run in a background thread
+  after the answer is returned (`[learn] background`); the next question waits for them, so memory is
+  never written twice at once. Typical web answers on a CPU laptop: 12–35 s; memory answers: 5–15 s.
+- Follow-ups such as "what rank is used for it?" are rewritten into standalone questions
+  (`wesla/rewrite.py`) **before** routing, memory search and web search, using the earlier questions of
+  the same chat. If the small model fails to rewrite, the previous question's topic words are attached
+  instead. A new chat starts with no history, by design.
 
 ### Calibrate thresholds first
 Similarity thresholds depend on the embedder. With bge-small, ask ~20 questions, then look at the

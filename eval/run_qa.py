@@ -44,7 +44,9 @@ def main(argv=None) -> dict:
     from wesla.agent import WESLA
     from wesla.config import load_config
 
-    agent = WESLA(load_config(args.config))
+    cfg = load_config(args.config)
+    cfg.learn.background = False   # count every Judge decision per question
+    agent = WESLA(cfg)
     rows = [json.loads(l) for l in Path(args.questions).read_text(encoding="utf-8").splitlines() if l.strip()]
     if args.limit:
         rows = rows[: args.limit]

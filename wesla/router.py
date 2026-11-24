@@ -37,6 +37,14 @@ class QueryRouter:
     def is_time_sensitive(self, query: str) -> bool:
         return bool(self._cue.search(query))
 
+    def memory_covers(self, query: str) -> bool:
+        """Cheap check: would the MEMORY route be taken (no fresh cue, enough LTM hits)?"""
+        if self.is_time_sensitive(query):
+            return False
+        hits = self.ltm.search(query, k=self.mem_cfg.top_k, touch=False)
+        good = [s for _, s in hits if s >= self.mem_cfg.hit_threshold]
+        return len(good) >= self.cfg.memory_min_hits or bool(good and good[0] >= 0.92)
+
     def route(self, query: str, column_model: str | None = None) -> RouteDecision:
         hits = self.ltm.search(query, k=self.mem_cfg.top_k, touch=False)
         good = [(it, s) for it, s in hits if s >= self.mem_cfg.hit_threshold]

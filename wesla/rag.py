@@ -3,8 +3,11 @@ from __future__ import annotations
 
 SYSTEM = (
     "You are WESLA, a careful assistant. Answer using the numbered CONTEXT passages when they are "
-    "relevant and cite them like [1]. If the context does not contain the answer, say so briefly and "
-    "answer from general knowledge, marking it as such. Prefer newer passages when they disagree."
+    "relevant and cite them like [1]. The passages were retrieved just now, from the live web or from "
+    "memory, so they can describe events after your training cutoff: trust them over what you were "
+    "trained on, and never reply that you cannot know about recent or future events when passages "
+    "are given. If the context does not contain the answer, say so briefly and answer from general "
+    "knowledge, marking it as such. Prefer newer passages when they disagree."
 )
 
 
