@@ -45,7 +45,7 @@ class QueryRouter:
         good = [s for _, s in hits if s >= self.mem_cfg.hit_threshold]
         return len(good) >= self.cfg.memory_min_hits or bool(good and good[0] >= 0.92)
 
-    def route(self, query: str, column_model: str | None = None) -> RouteDecision:
+    def route(self, query: str, column_model: str | None = None, *, history: str = "", require_sources: bool = False) -> RouteDecision:
         hits = self.ltm.search(query, k=self.mem_cfg.top_k, touch=False)
         good = [(it, s) for it, s in hits if s >= self.mem_cfg.hit_threshold]
 
@@ -55,11 +55,12 @@ class QueryRouter:
         if len(good) >= self.cfg.memory_min_hits or (good and good[0][1] >= 0.92):
             return RouteDecision(Route.MEMORY, f"{len(good)} LTM hit(s) >= {self.mem_cfg.hit_threshold}", good)
 
-        if self.cfg.use_entropy:
+        if self.cfg.use_entropy and not require_sources:
+            prompt = f"Recent conversation:\n{history}\n\nQuestion: {query}" if history else query
             try:
                 draft = self.llm.chat(
                     [{"role": "system", "content": "Answer the question directly. For requested tables, use a Markdown pipe table with a header and separator row. If you do not know, say 'I don't know'."},
-                     {"role": "user", "content": query}],
+                     {"role": "user", "content": prompt}],
                     model=column_model, max_tokens=512, want_logprobs=True)
             except Stopped:
                 raise

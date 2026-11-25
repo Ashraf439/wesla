@@ -14,3 +14,4 @@ python-docx>=1.1
 openpyxl>=3.1
 PyMuPDF>=1.26
 markdown-it-py>=3
+rapidocr-onnxruntime>=1.4,<2; platform_system != 'Windows'

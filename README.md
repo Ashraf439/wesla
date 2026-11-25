@@ -39,25 +39,35 @@ Design choices beyond the proposal text (all configurable in `config.toml`):
   is what raises U.
 - **Novelty N** is measured against knowledge already learned or queued, not against all memory.
 
-## Quick start (Windows / macOS / Linux)
+## Run WESLA locally
 
-```bash
-python -m venv .venv && .venv\Scripts\activate        # macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
-python -m pytest                # 32 offline tests, no models needed
-python -m wesla demo            # offline walkthrough of every Judge outcome
+The chat app runs on a CPU. Install Git, Python (tested with 3.12), and Ollama. Start Ollama, then clone this version and create a Python environment.
+
+```sh
+git clone --branch feature/document-aware-chat https://github.com/Ashraf439/wesla.git
+cd wesla
+python -m venv .venv
 ```
 
-Live mode:
-```bash
+Activate the environment with `.\.venv\Scripts\Activate.ps1` in Windows PowerShell or `source .venv/bin/activate` on macOS/Linux. Then run:
+
+```sh
+python -m pip install -r requirements.txt
 ollama pull llama3.2:1b
-set GROQ_API_KEY=...            # optional fallback generator (export on macOS/Linux)
-set TAVILY_API_KEY=...          # optional second search provider
-python -m wesla ui              # Gradio at http://localhost:7860
-python -m wesla chat            # terminal; '+' / '-' / '-! correction' give feedback
-python -m wesla stats
+ollama pull qwen3-vl:2b-instruct
+python -m wesla ui
 ```
-The first run downloads `bge-small-en-v1.5` (~130 MB) and the NLI cross-encoder (~140 MB).
+
+Open [the local chat workspace](http://localhost:7860). The second Ollama model handles photos and scanned documents. The first app launch also downloads the embedding and verification models. Web research needs internet access. The default search provider works without an API key. Set `TAVILY_API_KEY` for the optional second search provider or `GROQ_API_KEY` for the optional generation fallback.
+
+Run `python -m pytest -q` for the offline tests, `python -m wesla demo` for the offline walkthrough, or `python -m wesla chat` for the terminal interface.
+
+## Ask about a file or part of an answer
+
+1. Use **+** in the composer to attach a file and send a question. Select its card above your message to preview it. Open **Artifacts** to download, remove, or attach a saved file to another chat.
+2. Ask a follow-up in the same chat. For example, after uploading a certificate, ask “Which college is named?” WESLA can answer from the page. To keep the answer within the document, say “Use only the PDF.”
+3. For outside information, ask “Tell me more about that college.” WESLA uses the excerpt and recent conversation to identify the college. When it recognizes that the question needs outside facts, it checks long-term memory and searches the web if coverage is insufficient. Time-sensitive lookups go to the web. Open the answer's sources to inspect the evidence.
+4. Highlight text in an answer and choose **Add to chat** to quote it in your next message. Choose **Ask in side chat** for a separate follow-up that preserves the main draft. Closing the side panel ends that side conversation.
 
 ### Logs and troubleshooting
 - Every run writes `data/logs/wesla.log` (full DEBUG detail, rotated at 5 MB). Each query is logged
@@ -79,7 +89,7 @@ The first run downloads `bge-small-en-v1.5` (~130 MB) and the NLI cross-encoder 
   web search starts while the router is still deciding, and NLI runs in one batch and only on the
   chunks shown to the model. The remaining NLI checks and the Learning Judge run in a background thread
   after the answer is returned (`[learn] background`); the next question waits for them, so memory is
-  never written twice at once. Typical web answers on a CPU laptop: 12–35 s; memory answers: 5–15 s.
+  never written twice at once. Latency varies with the CPU, model, network, and verification workload.
 - Follow-ups such as "what rank is used for it?" are rewritten into standalone questions
   (`wesla/rewrite.py`) **before** routing, memory search and web search, using the earlier questions of
   the same chat. If the small model fails to rewrite, the previous question's topic words are attached
@@ -91,6 +101,56 @@ router reasons and verification JSON in the UI and tune `memory.hit_threshold`,
 `verify.consensus_sim`, and `judge.merge_sim`. Ollama's token logprobs (needed for the entropy
 route) only exist in recent Ollama versions; without them the router falls back to the web, and the
 UI's route reason says "no logprobs from provider". Update Ollama if you see that.
+
+## Inspect memory, uploads, and training
+
+- **Memory & training → Short-term memory** previews the recent turns available from the
+  selected chat. Actual recall is query-dependent. WESLA stores chat history in this
+  browser and rebuilds the short-term context for each normal chat request. Use
+  **Forget turn** or **Clear short-term memory** to exclude turns from future
+  context and training exports while keeping the transcript visible.
+- **Long-term memory** lists stored passages, their sources, and their status from
+  `data/ltm.sqlite`. The Learning Judge can queue eligible records in
+  `data/train_queue.jsonl`. Check the counts under **Training** for pending records and
+  registered adapters. **Remove record** deletes that record from the SQLite
+  store, vector index, and local queue. Copies in logs, exports, or existing
+  adapters are separate.
+- **Artifacts** holds original uploads under `data/artifacts`. From there you can
+  download originals or attach readable documents to another chat. Unsupported uploads can be downloaded. Scanned PDFs use local OCR for up to 12
+  scanned pages per file. On Windows, OCR uses an installed Windows OCR language. Photos use local vision via Ollama. Install the vision
+  model with `ollama pull qwen3-vl:2b-instruct`. File analysis uses extracted excerpts and
+  does not add them to the training queue.
+- **Training evidence** appears in a trainer run's `train.log`, `report_*.json`,
+  and `trained.json`. Inspect the completed jobs and accepted IDs before importing a
+  run. An imported column also needs its exported Ollama adapter installed for model
+  routing to use it.
+
+### Train on a supplied dataset
+
+Use **Export this chat for training** to build JSONL examples from the chat's
+retained question-and-answer pairs. Review the answers before using the export.
+The export prepares data for the trainer and chat itself does not update weights.
+
+For a curated dataset, create a separate UTF-8 JSONL file with one factual passage per
+line and a unique negative integer ID for each record. Negative IDs keep manually
+supplied samples separate from existing SQLite memory IDs. Example:
+
+```json
+{"kind":"learn","memory_id":-1,"text":"Write one reviewed training passage here."}
+```
+
+On a GPU machine, install `requirements-train.txt` into a GPU-capable Python
+environment and plan the run with the command below. By default the trainer
+requires four eligible items to start and eight similar items to create a new column.
+
+```bash
+python -m trainer.train --queue my-data.jsonl --workdir runs/custom --dry-run
+```
+
+Remove `--dry-run` to train after reviewing the planned jobs. See the training loop
+below for exporting and installing accepted adapters. Manually supplied passages
+are adapter training data. Their negative IDs have no corresponding SQLite records
+to mark as learned.
 
 ## Training loop
 

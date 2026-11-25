@@ -63,21 +63,25 @@ class OllamaLLM:
     def chat(self, messages, model=None, max_tokens=512, temperature=0.2, want_logprobs=False):
         body = {"model": model or self.model, "messages": messages, "stream": current.get() is not None,
                 "options": {"temperature": temperature, "num_predict": max_tokens}}
+        has_images = any(message.get("images") for message in messages)
+        timeout = max(self.timeout, 180) if has_images else self.timeout
+        if has_images:
+            body["think"] = False
         if want_logprobs:
             body |= {"logprobs": True, "top_logprobs": 5}
         log.debug("ollama POST /api/chat model=%s logprobs=%s", body["model"], want_logprobs)
         try:
-            r = requests.post(f"{self.url}/api/chat", json=body, timeout=self.timeout, stream=body["stream"])
+            r = requests.post(f"{self.url}/api/chat", json=body, timeout=timeout, stream=body["stream"])
         except requests.ConnectionError as exc:
             raise RuntimeError(f"cannot reach Ollama at {self.url} - is the Ollama app running? ({exc!s:.80})")
         except requests.Timeout:
-            raise RuntimeError(f"Ollama did not answer within {self.timeout:.0f}s (model {body['model']}); "
+            raise RuntimeError(f"Ollama did not answer within {timeout:.0f}s (model {body['model']}); "
                                f"raise [llm] timeout_s or use a smaller model")
-        if r.status_code == 404 and body["model"] != self.model:
+        if r.status_code == 404 and body["model"] != self.model and not has_images:
             log.warning("Ollama model %s not found; falling back to base model %s "
                         "(run `ollama create` for the column)", body["model"], self.model)
             body["model"] = self.model
-            r = requests.post(f"{self.url}/api/chat", json=body, timeout=self.timeout, stream=body["stream"])
+            r = requests.post(f"{self.url}/api/chat", json=body, timeout=timeout, stream=body["stream"])
         if r.status_code == 404:
             raise RuntimeError(f"Ollama has no model {body['model']!r} - run: ollama pull {body['model']}")
         if r.status_code >= 400:

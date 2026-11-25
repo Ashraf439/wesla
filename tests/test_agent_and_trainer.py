@@ -53,6 +53,16 @@ def test_web_then_memory_then_queue(tmp_path):
     assert len(cands) == 3
 
 
+def test_document_research_uses_web_on_miss_then_memory(tmp_path):
+    agent = make_agent(tmp_path, RESULTS, entropy=0.1)
+    lookup = "elastic weight consolidation Fisher information"
+    first = agent.ask("Tell me about that method", research_query=lookup)
+    assert first.route == Route.WEB and first.sources
+    again = agent.ask("Tell me about that method", research_query=lookup)
+    assert again.route == Route.MEMORY
+    assert agent.metrics["web_searches"] == 1
+
+
 def test_parametric_route_when_confident(tmp_path):
     a = make_agent(tmp_path, RESULTS, entropy=0.3)
     ans = a.ask("define a neural network")

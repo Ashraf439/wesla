@@ -36,6 +36,25 @@ class TrainQueue:
     def retract(self, memory_id: int, reason: str) -> None:
         self._append({"kind": "retract", "memory_id": memory_id, "reason": reason})
 
+    def forget(self, memory_id: int) -> None:
+        """Remove this record's payload from the local queue."""
+        if not self.path.exists():
+            return
+        lines = self.path.read_text(encoding="utf-8").splitlines(keepends=True)
+        kept = [line for line in lines
+                if not line.strip() or json.loads(line).get("memory_id") != memory_id]
+        if len(kept) != len(lines):
+            from tempfile import NamedTemporaryFile
+
+            with NamedTemporaryFile(mode="w", encoding="utf-8", newline="",
+                                    dir=self.path.parent, delete=False) as temporary:
+                temp_path = Path(temporary.name)
+                temporary.writelines(kept)
+            try:
+                temp_path.replace(self.path)
+            finally:
+                temp_path.unlink(missing_ok=True)
+
     def pending(self) -> list[dict]:
         if not self.path.exists():
             return []

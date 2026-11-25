@@ -20,6 +20,7 @@ class LLMConfig:
     # Ordered list of providers to try: "ollama", "groq", "openrouter", "echo"
     providers: list[str] = field(default_factory=lambda: ["ollama", "groq"])
     ollama_url: str = "http://localhost:11434"
+    ollama_vision_model: str = "qwen3-vl:2b-instruct"
     ollama_model: str = "llama3.2:1b"
     groq_model: str = "llama-3.1-8b-instant"
     openrouter_model: str = "meta-llama/llama-3.2-3b-instruct:free"
