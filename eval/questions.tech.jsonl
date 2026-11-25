@@ -1,0 +1,8 @@
+{"question": "What is retrieval-augmented generation?", "answers": ["retriev"]}
+{"question": "In what year was the transformer architecture introduced?", "answers": ["2017"]}
+{"question": "What paper introduced the transformer?", "answers": ["Attention Is All You Need"]}
+{"question": "What does LoRA stand for?", "answers": ["low-rank adaptation", "low rank adaptation"]}
+{"question": "Which matrix does elastic weight consolidation use to weigh parameter importance?", "answers": ["Fisher"]}
+{"question": "Who proposed progressive neural networks?", "answers": ["Rusu", "DeepMind"]}
+{"question": "Which company created the PyTorch framework?", "answers": ["Meta", "Facebook"]}
+{"question": "What does RLHF stand for?", "answers": ["reinforcement learning from human feedback"]}

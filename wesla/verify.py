@@ -16,6 +16,7 @@ from typing import Protocol
 
 import numpy as np
 
+from .boilerplate import boilerplate_reason
 from .embeddings import Embedder
 from .memory import LongTermMemory
 from .log import get_logger
@@ -190,8 +191,10 @@ class Verifier:
         todo = list(indices)
         for i in todo:
             for item, sim in self.ltm.search(vecs[i], k=self.memory_k, touch=False, min_sim=self.c_min_sim):
-                # near-identical text cannot contradict itself; skip the expensive model call
-                if item.reliability >= self.trusted and sim < 0.95:
+                # near-identical text cannot contradict itself; skip the expensive model call.
+                # Boilerplate already in memory (menus, reference lists) is never evidence: NLI
+                # scores it as "contradiction" against almost anything on the same page topic.
+                if item.reliability >= self.trusted and sim < 0.95 and not boilerplate_reason(item.knowledge):
                     pairs.append((item.knowledge, verified[i].chunk.text))
                     owners.append((i, item.id))
         batch = getattr(self.nli, "contradiction_batch", None)

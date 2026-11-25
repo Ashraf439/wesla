@@ -67,10 +67,10 @@ class DedupConfig:
 
 @dataclass
 class VerifyConfig:
-    consensus_sim: float = 0.70     # cosine similarity for "two sources agree"
+    consensus_sim: float = 0.85     # bge-small: same-topic chunks from different sites sit at 0.70-0.85; 0.85+ is the top 0.2%
     min_sources: int = 2            # distinct domains needed for full consensus
     contradiction_threshold: float = 0.80  # NLI contradiction prob to block
-    contradiction_min_sim: float = 0.70    # only NLI-check memory items about the same fact
+    contradiction_min_sim: float = 0.80    # only NLI-check memory items about nearly the same claim
     nli_model: str = "cross-encoder/nli-deberta-v3-small"
     use_nli: bool = True
     nli_memory_k: int = 2           # trusted memory items NLI-checked per chunk
@@ -84,7 +84,7 @@ class MemoryConfig:
     stm_turns: int = 8
     stm_max_tokens: int = 2048
     decay_half_life_days: float = 30.0
-    hit_threshold: float = 0.75      # cosine sim for an LTM hit (calibrate per embedder)
+    hit_threshold: float = 0.74      # cosine sim for an LTM hit (bge-small; calibrate per embedder)
     top_k: int = 5
 
 
@@ -98,7 +98,7 @@ class RouterConfig:
         "recent", "2025", "2026", "new", "price", "score", "release",
     ])
     # entropy threshold (nats/token) for the parametric path, when logprobs exist
-    entropy_threshold: float = 1.2
+    entropy_threshold: float = 0.45  # llama3.2:1b is confidently wrong above ~0.5 nats/token
     use_entropy: bool = True
 
 

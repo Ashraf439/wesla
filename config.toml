@@ -34,10 +34,10 @@ threshold = 0.8
 num_perm = 128
 
 [verify]
-consensus_sim = 0.70
+consensus_sim = 0.85                    # "two sources agree"; same-topic chunks reach 0.70-0.85 without agreeing
 min_sources = 2
 contradiction_threshold = 0.80
-contradiction_min_sim = 0.70             # NLI only vs memory about the same fact (CPU NLI ~0.4s/pair)
+contradiction_min_sim = 0.80             # NLI only vs memory about nearly the same claim (CPU NLI ~0.4s/pair)
 use_nli = true
 nli_memory_k = 2                        # trusted memory items checked against each chunk
 nli_model = "cross-encoder/nli-deberta-v3-small"
@@ -47,12 +47,12 @@ min_verified_score = 0.35
 db_path = "data/ltm.sqlite"
 stm_turns = 8
 decay_half_life_days = 30.0
-hit_threshold = 0.75                    # calibrate on your data (see README)
+hit_threshold = 0.74                    # bge-small: on-topic memory 0.75-0.88, off-topic ML questions up to 0.72
 top_k = 5
 
 [router]
 memory_min_hits = 1
-entropy_threshold = 1.2
+entropy_threshold = 0.45              # llama3.2:1b: wrong answers scored 0.56-0.92, correct ones 0.09-0.38
 use_entropy = true
 
 [judge]

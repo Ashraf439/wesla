@@ -25,18 +25,43 @@ _VOLATILE = re.compile(
     r"\b(today|tonight|yesterday|tomorrow|this (week|month|morning|evening)|right now|currently|"
     r"breaking|live|price[sd]?|stock|shares? (rose|fell)|trading|score[sd]?|weather|forecast|"
     r"rumou?r(ed)?|reportedly|leak(ed)?|expected to|could|might|may|plans? to|upcoming|"
-    r"deal|sale|discount|minutes ago|hours ago|just now|trending)\b", re.I)
-# words that mark durable, definitional or historical facts
+    r"deal|sale|discount|minutes ago|hours ago|just now|trending|"
+    # rankings, wealth and market figures change constantly
+    # ("rank" alone is excluded: "low-rank" is everywhere in ML text; so are "cost" and "leads to")
+    r"richest|billionaires?|net worth|wealthiest|ranked|rankings?|leaderboard|top \d+|"
+    r"as of|latest|newest|valuation|market cap|revenue|pric(ing|e tag)|"
+    r"release date|launch(es|ed|ing)?|this year|so far|polls?)\b"
+    # money amounts: "$480 billion", "$7,350"
+    r"|\$\s?\d[\d,.]*\s*(?:billion|million|trillion|[bmk]\b)?", re.I)
+# words that mark durable, definitional or historical facts. Years count only when they are
+# clearly in the past (see _years): "introduced in 2021" is stable, "richest man in 2026" is not.
 _STABLE = re.compile(
-    r"\b(is defined as|refers to|is a|are a|was founded|was born|invented|introduced in|"
+    r"\b(is defined as|refers to|is a|are a|was founded|was born|invented|introduced|"
     r"consists of|known as|algorithm|theorem|architecture|protocol|standard|specification|"
-    r"released in \d{4}|in \d{4}|principle|method|equation)\b", re.I)
+    r"principle|method|equation)\b", re.I)
+_YEAR = re.compile(r"\b(19\d{2}|20\d{2})\b")
 
 
-def temporal_stability(text: str) -> float:
+def _years(text: str, now_year: int) -> tuple[int, int]:
+    """(past years, current-or-future years) mentioned in the text."""
+    past = recent = 0
+    for y in map(int, _YEAR.findall(text)):
+        if y >= now_year - 1:
+            recent += 1
+        else:
+            past += 1
+    return past, recent
+
+
+def temporal_stability(text: str, now_year: int | None = None) -> float:
+    if now_year is None:
+        from datetime import datetime, timezone
+
+        now_year = datetime.now(timezone.utc).year
     words = max(1, len(text.split()))
-    vol = len(_VOLATILE.findall(text))
-    stab = len(_STABLE.findall(text))
+    past, recent = _years(text, now_year)
+    vol = len(_VOLATILE.findall(text)) + recent
+    stab = len(_STABLE.findall(text)) + min(past, 3)
     density = (vol - 0.7 * stab) / math.sqrt(words)
     return float(min(1.0, max(0.0, 0.6 - 1.2 * density)))
 
