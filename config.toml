@@ -34,10 +34,10 @@ threshold = 0.8
 num_perm = 128
 
 [verify]
-consensus_sim = 0.70
+consensus_sim = 0.85                    # "two sources agree"; same-topic chunks reach 0.70-0.85 without agreeing
 min_sources = 2
 contradiction_threshold = 0.80
-contradiction_min_sim = 0.70             # NLI only vs memory about the same fact (CPU NLI ~0.4s/pair)
+contradiction_min_sim = 0.80             # NLI only vs memory about nearly the same claim (CPU NLI ~0.4s/pair)
 use_nli = true
 nli_memory_k = 2                        # trusted memory items checked against each chunk
 nli_model = "cross-encoder/nli-deberta-v3-small"

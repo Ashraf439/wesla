@@ -12,6 +12,7 @@ from datetime import datetime
 
 import time
 
+from .boilerplate import boilerplate_reason
 from .log import get_logger
 from .types import Chunk, SearchResult
 
@@ -133,6 +134,7 @@ def results_to_chunks(results: list[SearchResult], fetch: bool, min_tokens: int,
     to_fetch = [r.url for r in results if not r.content] if fetch else []
     fetched = fetch_all(to_fetch, budget_s, timeout)
     out: list[Chunk] = []
+    dropped = 0
     for r in results:
         text, date = r.content, r.published
         if not text and r.url in fetched:
@@ -143,8 +145,15 @@ def results_to_chunks(results: list[SearchResult], fetch: bool, min_tokens: int,
         if not text:
             continue
         for i, piece in enumerate(chunk_text(text, min_tokens, max_tokens, overlap_tokens)):
+            why = boilerplate_reason(piece)
+            if why:
+                dropped += 1
+                log.debug("dropped boilerplate chunk %s#%d: %s", r.url, i, why)
+                continue
             cid = hashlib.sha1(f"{r.url}#{i}".encode()).hexdigest()[:12]
             out.append(Chunk(text=piece, url=r.url, title=r.title, published=date, chunk_id=cid))
+    if dropped:
+        log.info("dropped %d boilerplate chunk(s) (menus, cookie banners, reference lists)", dropped)
     return out
 
 

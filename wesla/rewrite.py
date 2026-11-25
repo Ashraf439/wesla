@@ -76,7 +76,9 @@ def rewrite_followup(llm, query: str, previous: list[str]) -> str:
         log.warning("rewrite: failed (%s), using the topic fallback", exc)
         return _topic_fallback(query, previous)
     out = gen.text.strip().strip('"').splitlines()[0].strip() if gen.text.strip() else ""
-    out = re.sub(r"^(standalone question|question|rewritten)\s*:\s*", "", out, flags=re.I).strip('" ')
+    # the prompt's own labels ("FOLLOW-UP:", "EARLIER QUESTIONS:") are often echoed back
+    out = re.sub(r"^(?:(?:standalone|rewritten|follow[- ]?up|earlier)(?: questions?)?|questions?|rewritten)\s*:\s*",
+                 "", out, flags=re.I).strip('" ')
     # guard against the small model answering instead of rewriting, or rambling
     if not out or len(out.split()) > 3 * len(query.split()) + 15:
         log.info("rewrite: rejected %r", out[:120])

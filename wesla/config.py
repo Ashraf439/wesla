@@ -67,10 +67,10 @@ class DedupConfig:
 
 @dataclass
 class VerifyConfig:
-    consensus_sim: float = 0.70     # cosine similarity for "two sources agree"
+    consensus_sim: float = 0.85     # bge-small: same-topic chunks from different sites sit at 0.70-0.85; 0.85+ is the top 0.2%
     min_sources: int = 2            # distinct domains needed for full consensus
     contradiction_threshold: float = 0.80  # NLI contradiction prob to block
-    contradiction_min_sim: float = 0.70    # only NLI-check memory items about the same fact
+    contradiction_min_sim: float = 0.80    # only NLI-check memory items about nearly the same claim
     nli_model: str = "cross-encoder/nli-deberta-v3-small"
     use_nli: bool = True
     nli_memory_k: int = 2           # trusted memory items NLI-checked per chunk
