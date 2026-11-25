@@ -84,7 +84,7 @@ class MemoryConfig:
     stm_turns: int = 8
     stm_max_tokens: int = 2048
     decay_half_life_days: float = 30.0
-    hit_threshold: float = 0.75      # cosine sim for an LTM hit (calibrate per embedder)
+    hit_threshold: float = 0.74      # cosine sim for an LTM hit (bge-small; calibrate per embedder)
     top_k: int = 5
 
 
@@ -98,7 +98,7 @@ class RouterConfig:
         "recent", "2025", "2026", "new", "price", "score", "release",
     ])
     # entropy threshold (nats/token) for the parametric path, when logprobs exist
-    entropy_threshold: float = 1.2
+    entropy_threshold: float = 0.45  # llama3.2:1b is confidently wrong above ~0.5 nats/token
     use_entropy: bool = True
 
 

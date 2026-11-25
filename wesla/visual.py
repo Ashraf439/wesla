@@ -7,12 +7,20 @@ import os
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+from time import monotonic
 from pathlib import Path
 
 from .activity import checkpoint
+from .log import get_logger
+
+log = get_logger(__name__)
 
 PHOTO_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".avif", ".tif", ".tiff"}
 OCR_PAGE_LIMIT = 12
+OCR_PAGE_TIMEOUT_S = 25
+# Total OCR time per PDF. Requests hold the server lock while a scan is read, so a slow
+# OCR engine must not block everyone for 12 pages x 25 s.
+OCR_PDF_BUDGET_S = 90
 
 def is_photo(name):
     return Path(name).suffix.lower() in PHOTO_EXTENSIONS
@@ -22,25 +30,37 @@ def ocr_engine():
     from rapidocr_onnxruntime import RapidOCR
     return RapidOCR(intra_op_num_threads=2, inter_op_num_threads=1)
 
-def read_text(png):
-    if sys.platform == "win32":
-        script = Path(__file__).with_name("ocr_windows.ps1")
-        with TemporaryDirectory() as folder:
-            image = Path(folder) / "page.png"
-            image.write_bytes(png)
-            result = subprocess.run(
-                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
-                 script.read_text(encoding="utf-8")],
-                env={**os.environ, "WESLA_OCR_IMAGE": str(image)},
-                capture_output=True, encoding="utf-8", errors="replace", timeout=25,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            if result.returncode == 0:
-                return result.stdout.strip()
+def _read_text_windows(png):
+    script = Path(__file__).with_name("ocr_windows.ps1")
+    with TemporaryDirectory() as folder:
+        image = Path(folder) / "page.png"
+        image.write_bytes(png)
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+             script.read_text(encoding="utf-8")],
+            env={**os.environ, "WESLA_OCR_IMAGE": str(image)},
+            capture_output=True, encoding="utf-8", errors="replace", timeout=OCR_PAGE_TIMEOUT_S,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
         # Vision can still interpret the image if Windows has no installed OCR language.
+        log.warning("Windows OCR exited with code %s: %s", result.returncode, (result.stderr or "").strip()[:300])
         return ""
-    rows, _ = ocr_engine()(png)
-    return "\n".join(row[1] for row in (rows or []))
+
+def read_text(png):
+    """Best-effort OCR. Returns "" instead of raising, so one unreadable or slow page never
+    fails the whole request (and the PDF's OCR cache still gets written)."""
+    try:
+        if sys.platform == "win32":
+            return _read_text_windows(png)
+        rows, _ = ocr_engine()(png)
+        return "\n".join(row[1] for row in (rows or []))
+    except subprocess.TimeoutExpired:
+        log.warning("OCR gave up on an image after %ss", OCR_PAGE_TIMEOUT_S)
+    except Exception as exc:  # missing OCR engine, PowerShell unavailable, corrupt image...
+        log.warning("OCR failed: %s: %s", type(exc).__name__, exc)
+    return ""
 
 def png_image(data, size=1050):
     from PIL import Image, ImageOps
@@ -76,6 +96,8 @@ def scan_aware_pdf(data):
         if doc.needs_pass:
             raise ValueError("Unlock this PDF before analyzing it.")
         scanned = 0
+        started = monotonic()
+        budget_logged = False
         for page in doc:
             checkpoint()
             label = f"page {page.number + 1}"
@@ -86,7 +108,14 @@ def scan_aware_pdf(data):
                 pymupdf.Rect(image["bbox"]).get_area() >= page_area * 0.35
                 for image in page.get_image_info()
             ) if char_count < 1800 else False
-            if scanned < OCR_PAGE_LIMIT and (char_count < 200 or has_large_image):
+            needs_ocr = scanned < OCR_PAGE_LIMIT and (char_count < 200 or has_large_image)
+            if needs_ocr and monotonic() - started > OCR_PDF_BUDGET_S:
+                if not budget_logged:
+                    log.warning("OCR time budget (%ss) used up at page %d; remaining pages use their "
+                                "embedded text only", OCR_PDF_BUDGET_S, page.number + 1)
+                    budget_logged = True
+                needs_ocr = False
+            if needs_ocr:
                 checkpoint("Reading scanned PDF page " + str(page.number + 1))
                 scanned += 1
                 recognized = read_text(page_png(page, 1750))
